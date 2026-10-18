@@ -6,7 +6,7 @@
  *
  *   npm run db:seed
  */
-import { PrismaClient, type Prisma } from "@prisma/client";
+import { PrismaClient, type Course, type Prisma, type StudentProfile } from "@prisma/client";
 import { hash } from "@node-rs/argon2";
 import { DEFAULT_POLICY, gradeScore } from "../lib/grading/engine";
 import { recomputeStudents } from "../lib/services/snapshots";
@@ -90,7 +90,7 @@ async function main() {
     { code: "SWE 2201", title: "Object-Oriented Design", units: 2, level: 200, semester: 1, dept: se.id },
     { code: "CSC 2205", title: "Mini Project", units: 2, level: 200, semester: 1, dept: cs.id, caMax: 100, examMax: 0 },
   ];
-  const courses = new Map<string, Awaited<ReturnType<typeof db.course.create>>>();
+  const courses = new Map<string, Course>();
   for (const c of catalogue) {
     courses.set(c.code, await db.course.create({ data: { code: c.code, title: c.title, units: c.units, level: c.level, semester: c.semester, departmentId: c.dept, caMax: c.caMax ?? 40, examMax: c.examMax ?? 60 } }));
   }
@@ -115,9 +115,11 @@ async function main() {
 
   // ── Students: 24 synthetic 200-level students across programmes
   const programmeList = [progs.csc, progs.csc, progs.ift, progs.cys, progs.swe];
-  const students = [];
+  const students: StudentProfile[] = [];
   for (let i = 0; i < 24; i++) {
-    const matricNo = `DEMO/24/${String(i + 1).padStart(4, "0")}`;
+    // Sample matric format used in the proposal: CST/16/COM/00793, 00794, ...
+    const matricNo = `CST/16/COM/${String(793 + i).padStart(5, "0")}`;
+    const [firstName, surname] = i === 0 ? ["Ridwan", "Abdulkareem"] : [FIRST[i % 20]!, LAST[(i * 7) % 20]!];
     const u = await db.user.create({
       data: {
         username: matricNo,
@@ -125,7 +127,7 @@ async function main() {
         status: i === 23 ? "PENDING_ACTIVATION" : "ACTIVE",
         passwordHash: i === 23 ? null : pw,
         email: i === 23 ? null : `student${i + 1}@example.edu.ng`,
-        student: { create: { matricNo, firstName: FIRST[i % 20]!, surname: LAST[(i * 7) % 20]!, programmeId: programmeList[i % 5]!.id, entryYear: 2024, currentLevel: 200 } },
+        student: { create: { matricNo, firstName, surname, programmeId: programmeList[i % 5]!.id, entryYear: 2024, currentLevel: 200 } },
       },
       include: { student: true },
     });
@@ -189,8 +191,8 @@ async function main() {
 
   console.log("\nSeed complete. Demo accounts (password for all: %s):", DEMO_PASSWORD);
   console.table([
-    { role: "Student", username: "DEMO/24/0001" },
-    { role: "Student (not activated)", username: "DEMO/24/0024 — issue a code from Admin → Students" },
+    { role: "Student (Abdulkareem Ridwan)", username: "CST/16/COM/00793" },
+    { role: "Student (not activated)", username: "CST/16/COM/00816 — issue a code from Admin → Students" },
     { role: "Lecturer (CS)", username: "LEC001" },
     { role: "Lecturer (IT)", username: "LEC002" },
     { role: "Dept. Result Officers", username: "DROCSC / DROIFT / DROSWE" },

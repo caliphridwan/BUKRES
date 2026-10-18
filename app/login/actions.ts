@@ -99,7 +99,7 @@ export async function activate(_: FormState, form: FormData): Promise<FormState>
     user.status === "PENDING_ACTIVATION" &&
     (!user.activationExpires || user.activationExpires > new Date()) &&
     (await verifySecret(user.activationCodeHash, code));
-  if (!valid) {
+  if (!user || !valid) {
     await audit({ actorId: user?.id ?? null, action: "auth.activate.failed", entity: "User", entityId: username, ip });
     return { error: "The number or activation code is not valid, or the code has expired.", fields };
   }

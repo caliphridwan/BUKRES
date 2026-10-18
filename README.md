@@ -28,14 +28,14 @@ Demo password for every seeded account: `Demo-Password-2026`
 
 | Role | Sign in as |
 | --- | --- |
-| Student | `DEMO/24/0001` (student tab) |
+| Student | `CST/16/COM/00793` (student tab) |
 | Lecturer | `LEC001` (staff tab) |
 | Dept. result officers | `DROCSC`, `DROIFT`, `DROSWE` |
 | HODs | `HODCSC`, `HODIFT`, `HODSWE` |
 | Faculty admin | `ADMIN01` |
 | Super admin | `SUPER01` |
 
-Try the whole flow: `LEC001` opens **SWE 2201** (empty draft), downloads the template, fills it in and uploads it, then submits → `DROSWE` approves → `HODSWE` approves → `ADMIN01` records Faculty Board and Senate ratification, then publishes → `DEMO/24/0001` sees the new result and an updated CGPA. **CSC 2203** is already waiting for `DROCSC`.
+Try the whole flow: `LEC001` opens **SWE 2201** (empty draft), downloads the template, fills it in and uploads it, then submits → `DROSWE` approves → `HODSWE` approves → `ADMIN01` records Faculty Board and Senate ratification, then publishes → `CST/16/COM/00793` sees the new result and an updated CGPA. **CSC 2203** is already waiting for `DROCSC`.
 
 ## Tests
 

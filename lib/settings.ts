@@ -14,7 +14,7 @@ type Settings = typeof defaults;
 
 export async function getSetting<K extends keyof Settings>(key: K): Promise<Settings[K]> {
   const row = await db.setting.findUnique({ where: { key } });
-  return (row?.value as Settings[K] | undefined) ?? defaults[key];
+  return (row?.value as unknown as Settings[K] | undefined) ?? defaults[key];
 }
 
 export async function workflowStages(): Promise<Stage[]> {

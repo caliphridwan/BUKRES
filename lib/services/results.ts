@@ -217,7 +217,7 @@ async function importContext(offeringId: string) {
           const st = r.results[0]?.status;
           // Locked: in review, or published outside a correction window.
           const locked = st === "IN_REVIEW" || ((st === "PUBLISHED" || st === "WITHHELD") && !inCorrection);
-          return [r.student.matricNo.toUpperCase(), { registrationId: r.id, locked }];
+          return [r.student.matricNo.toUpperCase(), { registrationId: r.id, locked }] as const;
         }),
       ),
       policy,
@@ -240,7 +240,7 @@ export async function commitImport(
   offeringId: string,
   file: { rows: RawRow[]; sha256: string; fileName: string },
   ip: string | null,
-) {
+): Promise<ValidationResult> {
   const { o, ctx, scaleId } = await importContext(offeringId);
   assertCan(actor, { type: "offering.editScores", offering: factsOf(o), stage: (o.submission?.stage ?? "DRAFT") as string });
   const v = validateRows(file.rows, ctx);
@@ -278,7 +278,7 @@ export async function saveManualScores(
   offeringId: string,
   entries: Array<{ matricNo: string; ca: string; exam: string }>,
   ip: string | null,
-) {
+): Promise<ValidationResult> {
   const { o, ctx, scaleId } = await importContext(offeringId);
   assertCan(actor, { type: "offering.editScores", offering: factsOf(o), stage: (o.submission?.stage ?? "DRAFT") as string });
   const rows: RawRow[] = entries
@@ -291,7 +291,7 @@ export async function saveManualScores(
       ca_score: e.ca,
       exam_score: e.exam,
     }));
-  if (rows.length === 0) return { accepted: [], rejected: [], missing: [], fileErrors: [] } satisfies ValidationResult;
+  if (rows.length === 0) return { accepted: [], rejected: [], missing: [], fileErrors: [] };
   const v = validateRows(rows, ctx);
   if (v.accepted.length) {
     await ensureSubmission(offeringId);

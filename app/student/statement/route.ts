@@ -21,7 +21,9 @@ export async function GET(req: Request) {
   if (!pdf) return new NextResponse("No published results for that selection.", { status: 404 });
 
   await audit({ actorId: me.userId, action: "statement.download", entity: "StudentProfile", entityId: me.studentId, after: { semester } });
-  return new NextResponse(Buffer.from(pdf), {
+  // Copy into a plain ArrayBuffer: satisfies BodyInit under every TS/Node type version.
+  const body = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer;
+  return new NextResponse(body, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="result-statement-${me.username.replace(/[^A-Z0-9]/gi, "-")}.pdf"`,
