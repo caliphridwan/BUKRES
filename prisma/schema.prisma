@@ -1,0 +1,466 @@
+// BUK Faculty of Computing Result Portal — data model
+// Conventions: cuid ids, createdAt/updatedAt on mutable tables, append-only for
+// AuditLog and ApprovalAction (enforce with DB grants, see README §Security).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum Role {
+  STUDENT
+  LECTURER
+  DEPT_RESULT_OFFICER
+  HOD
+  FACULTY_ADMIN
+  SUPER_ADMIN
+}
+
+enum AccountStatus {
+  PENDING_ACTIVATION
+  ACTIVE
+  SUSPENDED
+}
+
+/// Status of one result row as students and the engine see it.
+enum ResultStatus {
+  DRAFT        // being entered, never visible to students
+  IN_REVIEW    // part of a submission moving through the workflow
+  PUBLISHED    // counts toward GPA/CGPA and is visible
+  WITHHELD     // published course, but this student's result is held
+  SUPERSEDED   // replaced by a newer version after an authorised correction
+}
+
+/// Outcome of the attempt. Only GRADED counts in GPA.
+enum AttemptOutcome {
+  GRADED
+  ABSENT
+  INCOMPLETE
+}
+
+enum ResultSource {
+  PORTAL    // entered in this system
+  IMPORTED  // ratified elsewhere (e.g. BUKRES) and imported
+}
+
+enum SubmissionStage {
+  DRAFT
+  SUBMITTED
+  DEPARTMENTAL_REVIEW
+  HOD_APPROVAL
+  FACULTY_BOARD
+  SENATE_RATIFIED
+  PUBLISHED
+}
+
+enum ApprovalVerb {
+  SUBMIT
+  ADVANCE
+  RETURN
+  PUBLISH
+  REOPEN_FOR_CORRECTION
+}
+
+enum StatementType {
+  SEMESTER
+  CUMULATIVE
+}
+
+enum StatementStatus {
+  VALID
+  SUPERSEDED
+  REVOKED
+}
+
+enum RepeatPolicy {
+  ALL_ATTEMPTS_COUNT
+  LATEST_ATTEMPT_ONLY
+  BEST_ATTEMPT_ONLY
+}
+
+enum RoundingMode {
+  HALF_UP
+  TRUNCATE
+}
+
+// ─── Identity ───────────────────────────────────────────────────────────────
+
+model User {
+  id                 String        @id @default(cuid())
+  /// Matric number for students, staff number for staff. Stored upper-case.
+  username           String        @unique
+  email              String?       @unique
+  emailVerifiedAt    DateTime?
+  passwordHash       String?
+  role               Role
+  status             AccountStatus @default(PENDING_ACTIVATION)
+  /// Argon2 hash of the one-time activation code issued by the faculty.
+  activationCodeHash String?
+  activationExpires  DateTime?
+  mfaSecret          String?       // TOTP secret (encrypt at rest in production)
+  mfaEnabled         Boolean       @default(false)
+  failedLogins       Int           @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  student       StudentProfile?
+  staff         StaffProfile?
+  sessions      Session[]
+  notifications Notification[]
+  auditLogs     AuditLog[]       @relation("AuditActor")
+  approvals     ApprovalAction[]
+  imports       ImportBatch[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  /// SHA-256 of the cookie token; the raw token is never stored.
+  tokenHash  String   @unique
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  mfaPassed  Boolean  @default(false)
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  key       String   // "user:<username>" or "ip:<address>"
+  createdAt DateTime @default(now())
+
+  @@index([key, createdAt])
+}
+
+model StudentProfile {
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matricNo     String    @unique
+  surname      String
+  firstName    String
+  otherNames   String?
+  programmeId  String
+  programme    Programme @relation(fields: [programmeId], references: [id])
+  entryYear    Int
+  currentLevel Int       // 100, 200, ...
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  registrations CourseRegistration[]
+  snapshots     GpaSnapshot[]
+  statements    Statement[]
+
+  @@index([programmeId, currentLevel])
+}
+
+model StaffProfile {
+  id           String      @id @default(cuid())
+  userId       String      @unique
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  staffNo      String      @unique
+  title        String?     // Dr., Prof., Mal., ...
+  surname      String
+  firstName    String
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  createdAt    DateTime    @default(now())
+
+  assignments CourseAssignment[]
+}
+
+// ─── Faculty structure ──────────────────────────────────────────────────────
+
+model Department {
+  id         String         @id @default(cuid())
+  code       String         @unique // CSC, IFT, SWE
+  name       String
+  hodEmail   String?
+  programmes Programme[]
+  courses    Course[]
+  staff      StaffProfile[]
+}
+
+model Programme {
+  id            String           @id @default(cuid())
+  code          String           @unique
+  name          String           // B.Sc. Computer Science
+  departmentId  String
+  department    Department       @relation(fields: [departmentId], references: [id])
+  durationYears Int              @default(4)
+  students      StudentProfile[]
+}
+
+model AcademicSession {
+  id        String     @id @default(cuid())
+  name      String     @unique // "2025/2026"
+  startYear Int        @unique
+  isCurrent Boolean    @default(false)
+  semesters Semester[]
+}
+
+model Semester {
+  id        String           @id @default(cuid())
+  sessionId String
+  session   AcademicSession  @relation(fields: [sessionId], references: [id])
+  number    Int              // 1 = First, 2 = Second
+  offerings CourseOffering[]
+  snapshots GpaSnapshot[]
+  statements Statement[]
+
+  @@unique([sessionId, number])
+}
+
+model Course {
+  id           String     @id @default(cuid())
+  code         String     @unique // "CSC 2201"
+  title        String
+  units        Int
+  level        Int
+  semester     Int        // nominal semester the course runs in
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  /// Assessment split. Courses may differ (e.g. projects with no exam).
+  caMax        Int        @default(40)
+  examMax      Int        @default(60)
+  offerings    CourseOffering[]
+}
+
+model CourseOffering {
+  id            String               @id @default(cuid())
+  courseId      String
+  course        Course               @relation(fields: [courseId], references: [id])
+  semesterId    String
+  semester      Semester             @relation(fields: [semesterId], references: [id])
+  assignments   CourseAssignment[]
+  registrations CourseRegistration[]
+  submission    ResultSubmission?
+  imports       ImportBatch[]
+
+  @@unique([courseId, semesterId])
+}
+
+model CourseAssignment {
+  id         String         @id @default(cuid())
+  offeringId String
+  offering   CourseOffering @relation(fields: [offeringId], references: [id])
+  staffId    String
+  staff      StaffProfile   @relation(fields: [staffId], references: [id])
+
+  @@unique([offeringId, staffId])
+}
+
+model CourseRegistration {
+  id         String         @id @default(cuid())
+  studentId  String
+  student    StudentProfile @relation(fields: [studentId], references: [id])
+  offeringId String
+  offering   CourseOffering @relation(fields: [offeringId], references: [id])
+  /// 1 for first sitting, 2+ for carryover/repeat attempts.
+  attempt    Int            @default(1)
+  createdAt  DateTime       @default(now())
+  results    Result[]
+
+  @@unique([studentId, offeringId])
+  @@index([offeringId])
+}
+
+// ─── Grading policy ─────────────────────────────────────────────────────────
+
+/// A versioned grading policy. Results keep the id of the scale they were
+/// graded under, so later policy changes never rewrite history.
+model GradeScale {
+  id           String       @id @default(cuid())
+  name         String       // "NUC-5PT-DEFAULT"
+  version      Int
+  /// [{ "min": 70, "max": 100, "grade": "A", "point": 5, "pass": true }, ...]
+  bands        Json
+  /// [{ "name": "First Class", "min": 4.5 }, ...] highest first
+  classes      Json
+  /// [{ "name": "Good Standing", "min": 1.5 }, ...]
+  standing     Json
+  maxScore     Int          @default(100)
+  decimals     Int          @default(2)
+  rounding     RoundingMode @default(HALF_UP)
+  repeatPolicy RepeatPolicy @default(ALL_ATTEMPTS_COUNT)
+  /// False until the Faculty formally confirms the policy.
+  confirmed    Boolean      @default(false)
+  isActive     Boolean      @default(false)
+  effectiveFrom DateTime    @default(now())
+  createdAt    DateTime     @default(now())
+  results      Result[]
+  snapshots    GpaSnapshot[]
+
+  @@unique([name, version])
+}
+
+// ─── Results & workflow ─────────────────────────────────────────────────────
+
+model Result {
+  id             String             @id @default(cuid())
+  registrationId String
+  registration   CourseRegistration @relation(fields: [registrationId], references: [id])
+  version        Int                @default(1)
+  caScore        Decimal?           @db.Decimal(5, 2)
+  examScore      Decimal?           @db.Decimal(5, 2)
+  totalScore     Decimal?           @db.Decimal(5, 2)
+  grade          String?
+  gradePoint     Int?
+  /// Units copied from the course at grading time (history-safe).
+  units          Int
+  outcome        AttemptOutcome     @default(GRADED)
+  status         ResultStatus       @default(DRAFT)
+  withheldReason String?            // category only, shown to student
+  source         ResultSource       @default(PORTAL)
+  gradeScaleId   String
+  gradeScale     GradeScale         @relation(fields: [gradeScaleId], references: [id])
+  publishedAt    DateTime?
+  supersededAt   DateTime?
+  correctionNote String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([registrationId, version])
+  @@index([status])
+}
+
+/// Workflow state for all results of one course offering.
+model ResultSubmission {
+  id          String           @id @default(cuid())
+  offeringId  String           @unique
+  offering    CourseOffering   @relation(fields: [offeringId], references: [id])
+  stage       SubmissionStage  @default(DRAFT)
+  isCorrection Boolean         @default(false)
+  updatedAt   DateTime         @updatedAt
+  createdAt   DateTime         @default(now())
+  actions     ApprovalAction[]
+}
+
+/// Append-only history of workflow transitions.
+model ApprovalAction {
+  id           String           @id @default(cuid())
+  submissionId String
+  submission   ResultSubmission @relation(fields: [submissionId], references: [id])
+  verb         ApprovalVerb
+  fromStage    SubmissionStage
+  toStage      SubmissionStage
+  actorId      String
+  actor        User             @relation(fields: [actorId], references: [id])
+  reason       String?
+  createdAt    DateTime         @default(now())
+
+  @@index([submissionId, createdAt])
+}
+
+model ImportBatch {
+  id          String         @id @default(cuid())
+  offeringId  String
+  offering    CourseOffering @relation(fields: [offeringId], references: [id])
+  uploaderId  String
+  uploader    User           @relation(fields: [uploaderId], references: [id])
+  fileName    String
+  fileSha256  String
+  acceptedRows Int
+  rejectedRows Int
+  /// [{ row: 7, matricNo: "...", errors: ["..."] }]
+  rejections  Json
+  committedAt DateTime       @default(now())
+
+  @@index([offeringId])
+}
+
+// ─── Calculations, statements, verification ────────────────────────────────
+
+/// Reproducible GPA calculation for one student at the end of one semester.
+model GpaSnapshot {
+  id             String         @id @default(cuid())
+  studentId      String
+  student        StudentProfile @relation(fields: [studentId], references: [id])
+  semesterId     String
+  semester       Semester       @relation(fields: [semesterId], references: [id])
+  gradeScaleId   String
+  gradeScale     GradeScale     @relation(fields: [gradeScaleId], references: [id])
+  semesterUnits  Int
+  semesterQP     Int
+  semesterGpa    Decimal        @db.Decimal(4, 2)
+  cumulativeUnits Int
+  cumulativeQP   Int
+  cgpa           Decimal        @db.Decimal(4, 2)
+  unitsEarned    Int
+  /// SHA-256 of the input result ids + versions, for audit.
+  inputHash      String
+  supersededAt   DateTime?
+  createdAt      DateTime       @default(now())
+
+  statements Statement[]
+
+  @@index([studentId, semesterId])
+}
+
+model Statement {
+  id          String          @id @default(cuid())
+  /// 26-char base32 of 128 random bits. Public verification key.
+  code        String          @unique
+  type        StatementType
+  studentId   String
+  student     StudentProfile  @relation(fields: [studentId], references: [id])
+  semesterId  String?
+  semester    Semester?       @relation(fields: [semesterId], references: [id])
+  snapshotId  String
+  snapshot    GpaSnapshot     @relation(fields: [snapshotId], references: [id])
+  status      StatementStatus @default(VALID)
+  issuedAt    DateTime        @default(now())
+  revokedAt   DateTime?
+
+  @@index([studentId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+/// Append-only. Grant the app role INSERT/SELECT only.
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation("AuditActor", fields: [actorId], references: [id])
+  action    String   // "auth.login.failed", "result.publish", ...
+  entity    String?
+  entityId  String?
+  before    Json?
+  after     Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model Setting {
+  key       String   @id // SHOW_RAW_SCORES, PUBLISH_ROLE, WORKFLOW_STAGES, ...
+  value     Json
+  updatedAt DateTime @updatedAt
+}
